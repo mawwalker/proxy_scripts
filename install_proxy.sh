@@ -14,6 +14,9 @@ WEB_ROOT="/var/www/$DOMAIN"
 NGINX_CONF="/etc/nginx/conf.d/${DOMAIN}.conf"
 ACME_CHALLENGE_DIR="$WEB_ROOT/.well-known/acme-challenge"
 LEGACY_NGINX_CONF="/etc/nginx/conf.d/vless.conf"
+METADATA_DIR="/etc/proxy_scripts"
+METADATA_FILE="$METADATA_DIR/${DOMAIN}.env"
+XRAY_CONFIG="/usr/local/etc/xray/config.json"
 
 reload_or_restart_nginx() {
   if systemctl is-active --quiet nginx; then
@@ -21,6 +24,27 @@ reload_or_restart_nginx() {
   else
     systemctl restart nginx
   fi
+}
+
+urlencode() {
+  local raw="${1:-}"
+  local encoded=""
+  local pos
+  local char
+
+  for ((pos = 0; pos < ${#raw}; pos++)); do
+    char="${raw:$pos:1}"
+    case "$char" in
+      [a-zA-Z0-9.~_-])
+        encoded+="$char"
+        ;;
+      *)
+        printf -v encoded '%s%%%02X' "$encoded" "'$char"
+        ;;
+    esac
+  done
+
+  printf '%s' "$encoded"
 }
 
 echo -e "\n开始安装所需组件..."
@@ -32,7 +56,7 @@ bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release
 
 # 3. 写入 Xray 配置文件 (VLESS-WS)
 echo -e "\n配置 Xray..."
-cat <<EOF >/usr/local/etc/xray/config.json
+cat <<EOF >"$XRAY_CONFIG"
 {
   "inbounds": [{
     "port": $PORT,
@@ -169,7 +193,24 @@ systemctl enable xray nginx
 systemctl restart xray
 reload_or_restart_nginx
 
-# 10. 输出客户端配置信息
+# 10. 保存部署元数据
+ENCODED_WSPATH="$(urlencode "$WSPATH")"
+VLESS_LINK="vless://$UUID@$DOMAIN:443?encryption=none&security=tls&type=ws&host=$DOMAIN&path=$ENCODED_WSPATH&sni=$DOMAIN#$DOMAIN"
+
+echo -e "\n写入部署元数据..."
+mkdir -p "$METADATA_DIR"
+{
+  printf 'DOMAIN=%q\n' "$DOMAIN"
+  printf 'UUID=%q\n' "$UUID"
+  printf 'WSPATH=%q\n' "$WSPATH"
+  printf 'PORT=%q\n' "$PORT"
+  printf 'WEB_ROOT=%q\n' "$WEB_ROOT"
+  printf 'NGINX_CONF=%q\n' "$NGINX_CONF"
+  printf 'XRAY_CONFIG=%q\n' "$XRAY_CONFIG"
+  printf 'VLESS_LINK=%q\n' "$VLESS_LINK"
+} >"$METADATA_FILE"
+
+# 11. 输出客户端配置信息
 clear
 echo -e "================================================="
 echo -e "部署成功！以下是你的客户端连接信息："
@@ -184,6 +225,9 @@ echo -e "路径 (Path): $WSPATH"
 echo -e "底层传输安全 (TLS): tls"
 echo -e "Nginx 配置文件: $NGINX_CONF"
 echo -e "伪装站目录: $WEB_ROOT"
+echo -e "部署元数据文件: $METADATA_FILE"
+echo -e "================================================="
+echo -e "客户端分享链接 (VLESS URL): $VLESS_LINK"
 echo -e "================================================="
 echo -e "现在你可以在浏览器中访问 https://$DOMAIN ，你会看到一个小游戏伪装页。"
 echo -e "后续如需新增其他网站，直接在 /etc/nginx/conf.d/ 新增其他域名的 conf 文件即可。"
