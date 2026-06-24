@@ -33,6 +33,15 @@ reload_or_restart_nginx() {
   fi
 }
 
+write_metadata_field() {
+  local key="$1"
+  local value="$2"
+  local escaped="$value"
+
+  escaped=${escaped//\'/\'\\\'\'}
+  printf "%s='%s'\n" "$key" "$escaped"
+}
+
 write_hy2_nginx_conf() {
   cat <<EOF >"$HY2_NGINX_CONF"
 server {
@@ -262,21 +271,21 @@ HY2_LINK="hy2://$HYSTERIA_AUTH@$HY2_DOMAIN:$HY2_PORT/?sni=$HY2_DOMAIN#$HY2_DOMAI
 echo -e "\n写入部署元数据..."
 mkdir -p "$METADATA_DIR"
 {
-  printf 'DOMAIN=%q\n' "$DOMAIN"
-  printf 'UUID=%q\n' "$UUID"
-  printf 'WSPATH=%q\n' "$WSPATH"
-  printf 'PORT=%q\n' "$PORT"
-  printf 'WEB_ROOT=%q\n' "$WEB_ROOT"
-  printf 'NGINX_CONF=%q\n' "$NGINX_CONF"
-  printf 'HY2_DOMAIN=%q\n' "$HY2_DOMAIN"
-  printf 'HY2_PORT=%q\n' "$HY2_PORT"
-  printf 'HY2_WEB_ROOT=%q\n' "$HY2_WEB_ROOT"
-  printf 'HY2_NGINX_CONF=%q\n' "$HY2_NGINX_CONF"
-  printf 'XRAY_CONFIG=%q\n' "$XRAY_CONFIG"
-  printf 'HYSTERIA_CONFIG=%q\n' "$HYSTERIA_CONFIG"
-  printf 'HYSTERIA_AUTH=%q\n' "$HYSTERIA_AUTH"
-  printf 'VLESS_LINK=%q\n' "$VLESS_LINK"
-  printf 'HY2_LINK=%q\n' "$HY2_LINK"
+  write_metadata_field "DOMAIN" "$DOMAIN"
+  write_metadata_field "UUID" "$UUID"
+  write_metadata_field "WSPATH" "$WSPATH"
+  write_metadata_field "PORT" "$PORT"
+  write_metadata_field "WEB_ROOT" "$WEB_ROOT"
+  write_metadata_field "NGINX_CONF" "$NGINX_CONF"
+  write_metadata_field "HY2_DOMAIN" "$HY2_DOMAIN"
+  write_metadata_field "HY2_PORT" "$HY2_PORT"
+  write_metadata_field "HY2_WEB_ROOT" "$HY2_WEB_ROOT"
+  write_metadata_field "HY2_NGINX_CONF" "$HY2_NGINX_CONF"
+  write_metadata_field "XRAY_CONFIG" "$XRAY_CONFIG"
+  write_metadata_field "HYSTERIA_CONFIG" "$HYSTERIA_CONFIG"
+  write_metadata_field "HYSTERIA_AUTH" "$HYSTERIA_AUTH"
+  write_metadata_field "VLESS_LINK" "$VLESS_LINK"
+  write_metadata_field "HY2_LINK" "$HY2_LINK"
 } >"$METADATA_FILE"
 
 # 11. 输出客户端配置信息
@@ -301,8 +310,10 @@ echo -e "伪装站目录: $WEB_ROOT"
 echo -e "Hysteria2 Challenge 目录: $HY2_WEB_ROOT"
 echo -e "部署元数据文件: $METADATA_FILE"
 echo -e "================================================="
-echo -e "客户端分享链接 (VLESS URL): $VLESS_LINK"
-echo -e "客户端分享链接 (Hysteria2 URL): $HY2_LINK"
+echo -e "客户端分享链接 (VLESS URL):"
+printf '%s\n' "$VLESS_LINK"
+echo -e "客户端分享链接 (Hysteria2 URL):"
+printf '%s\n' "$HY2_LINK"
 echo -e "================================================="
 echo -e "现在你可以在浏览器中访问 https://$DOMAIN ，你会看到一个小游戏伪装页。"
 echo -e "Hysteria2 的 $HY2_DOMAIN 必须保持 DNS only，并确保 443/udp 已放行。"
