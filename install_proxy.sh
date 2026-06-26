@@ -1,13 +1,26 @@
 #!/bin/bash
-# Nginx + VLESS + WS + TLS 自动化部署脚本配小游戏伪装页
+# Nginx + Xray CDN + sing-box Reality + Hysteria2 自动化部署脚本
 
-# 1. 收集信息
-read -p "请输入你的域名 (例如: demo.yourdomain.com): " DOMAIN
+set -euo pipefail
+
+if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+  echo "请使用 root 运行此脚本。"
+  exit 1
+fi
+
+read -p "请输入你的 CDN 域名 (例如: cdn.yourdomain.com): " DOMAIN
 read -p "请输入你想设置的 WebSocket 路径 (需以 / 开头，例如: /secret-ws): " WSPATH
 read -p "请输入 Hysteria2 使用的直连域名 (例如: hy2.yourdomain.com): " HY2_DOMAIN
-UUID=$(cat /proc/sys/kernel/random/uuid)
+
+UUID="$(cat /proc/sys/kernel/random/uuid)"
 PORT=10000
+CDN_PORT=8443
+REALITY_PORT=443
 HY2_PORT=443
+SERVER_IP=""
+REALITY_SERVER_NAME="s3.amazonaws.com"
+REALITY_FINGERPRINT="chrome"
+REALITY_SHORT_ID=""
 REPO_RAW_BASE="https://raw.githubusercontent.com/mawwalker/proxy_scripts/main"
 REMOTE_INDEX_HTML_URL="$REPO_RAW_BASE/index.html"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -22,8 +35,68 @@ LEGACY_NGINX_CONF="/etc/nginx/conf.d/vless.conf"
 METADATA_DIR="/etc/proxy_scripts"
 METADATA_FILE="$METADATA_DIR/${DOMAIN}.env"
 XRAY_CONFIG="/usr/local/etc/xray/config.json"
+REALITY_CONFIG_DIR="/etc/sing-box"
+REALITY_CONFIG="$REALITY_CONFIG_DIR/config.json"
 HYSTERIA_CONFIG="/etc/hysteria/config.yaml"
 HYSTERIA_AUTH="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24 || true)"
+REALITY_PRIVATE_KEY=""
+REALITY_PUBLIC_KEY=""
+
+select_reality_target() {
+  local choice
+
+  echo
+  echo "请选择 Reality 借用目标："
+  echo "1. s3.amazonaws.com (默认)"
+  echo "2. www.microsoft.com"
+  echo "3. learn.microsoft.com"
+  echo "4. 自定义"
+  read -r -p "请输入选项 [1-4，默认 1]: " choice
+
+  case "${choice:-1}" in
+    1)
+      REALITY_SERVER_NAME="s3.amazonaws.com"
+      ;;
+    2)
+      REALITY_SERVER_NAME="www.microsoft.com"
+      ;;
+    3)
+      REALITY_SERVER_NAME="learn.microsoft.com"
+      ;;
+    4)
+      read -r -p "请输入自定义 Reality 借用域名: " REALITY_SERVER_NAME
+      ;;
+    *)
+      echo "无效选项，使用默认值 s3.amazonaws.com"
+      REALITY_SERVER_NAME="s3.amazonaws.com"
+      ;;
+  esac
+
+  if [[ -z "$REALITY_SERVER_NAME" ]]; then
+    echo "Reality 借用域名不能为空。"
+    exit 1
+  fi
+}
+
+detect_public_ipv4() {
+  local candidate
+  local endpoint
+  local endpoints=(
+    "https://api.ipify.org"
+    "https://ipv4.icanhazip.com"
+    "https://ifconfig.me/ip"
+  )
+
+  for endpoint in "${endpoints[@]}"; do
+    candidate="$(curl -4fsSL --max-time 8 "$endpoint" 2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ "$candidate" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
 
 reload_or_restart_nginx() {
   if systemctl is-active --quiet nginx; then
@@ -60,6 +133,80 @@ server {
 EOF
 }
 
+install_sing_box() {
+  echo -e "\n安装 sing-box..."
+  mkdir -p /etc/apt/keyrings
+  curl -fsSL https://sing-box.app/gpg.key -o /etc/apt/keyrings/sagernet.asc
+  chmod a+r /etc/apt/keyrings/sagernet.asc
+  cat <<'EOF' >/etc/apt/sources.list.d/sagernet.sources
+Types: deb
+URIs: https://deb.sagernet.org/
+Suites: *
+Components: *
+Enabled: yes
+Signed-By: /etc/apt/keyrings/sagernet.asc
+EOF
+  apt-get update -y
+  apt-get install -y sing-box
+}
+
+generate_reality_keys() {
+  local keypair_output
+
+  keypair_output="$(sing-box generate reality-keypair)"
+  REALITY_PRIVATE_KEY="$(printf '%s\n' "$keypair_output" | awk -F': ' '/^PrivateKey:/ {print $2}')"
+  REALITY_PUBLIC_KEY="$(printf '%s\n' "$keypair_output" | awk -F': ' '/^PublicKey:/ {print $2}')"
+
+  if [[ -z "$REALITY_PRIVATE_KEY" || -z "$REALITY_PUBLIC_KEY" ]]; then
+    echo "生成 Reality 密钥失败。"
+    exit 1
+  fi
+}
+
+write_reality_config() {
+  mkdir -p "$REALITY_CONFIG_DIR"
+  cat <<EOF >"$REALITY_CONFIG"
+{
+  "log": {
+    "level": "warn"
+  },
+  "inbounds": [
+    {
+      "type": "vless",
+      "tag": "reality-in",
+      "listen_port": $REALITY_PORT,
+      "users": [
+        {
+          "uuid": "$UUID",
+          "flow": "xtls-rprx-vision"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "reality": {
+          "enabled": true,
+          "handshake": {
+            "server": "$REALITY_SERVER_NAME",
+            "server_port": 443
+          },
+          "private_key": "$REALITY_PRIVATE_KEY",
+          "short_id": [
+            "$REALITY_SHORT_ID"
+          ]
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ]
+}
+EOF
+}
+
 urlencode() {
   local raw="${1:-}"
   local encoded=""
@@ -82,23 +229,40 @@ urlencode() {
 }
 
 if [[ -z "$DOMAIN" || -z "$WSPATH" || -z "$HY2_DOMAIN" ]]; then
-  echo "域名、WebSocket 路径、Hysteria2 域名都不能为空。"
+  echo "CDN 域名、WebSocket 路径、Hysteria2 域名都不能为空。"
+  exit 1
+fi
+
+if [[ "$WSPATH" != /* ]]; then
+  echo "WebSocket 路径必须以 / 开头。"
   exit 1
 fi
 
 if [[ "$HY2_DOMAIN" == "$DOMAIN" ]]; then
-  echo "Hysteria2 直连域名不能和 CDN 代理域名相同，请使用单独的子域名。"
+  echo "Hysteria2 直连域名不能和 CDN 域名相同。"
   exit 1
 fi
 
-echo -e "\n开始安装所需组件..."
-apt update -y && apt install -y nginx curl unzip certbot
+select_reality_target
 
-# 2. 安装 Xray-core
+echo -e "\n开始安装所需组件..."
+apt-get update -y
+apt-get install -y nginx curl unzip certbot openssl
+
 echo -e "\n安装 Xray-Core..."
 bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 
-# 3. 写入 Xray 配置文件 (VLESS-WS)
+install_sing_box
+REALITY_SHORT_ID="$(openssl rand -hex 8)"
+SERVER_IP="$(detect_public_ipv4 || true)"
+if [[ -z "$SERVER_IP" ]]; then
+  read -r -p "自动检测公网 IPv4 失败，请手动输入服务器公网 IPv4: " SERVER_IP
+fi
+if [[ ! "$SERVER_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+  echo "服务器公网 IPv4 格式不正确。"
+  exit 1
+fi
+
 echo -e "\n配置 Xray..."
 cat <<EOF >"$XRAY_CONFIG"
 {
@@ -122,7 +286,6 @@ cat <<EOF >"$XRAY_CONFIG"
 }
 EOF
 
-# 4. 生成小游戏伪装页
 echo -e "\n部署小游戏伪装页..."
 mkdir -p "$ACME_CHALLENGE_DIR"
 mkdir -p "$HY2_ACME_CHALLENGE_DIR"
@@ -137,14 +300,12 @@ else
   fi
 fi
 
-# 5. 迁移旧版固定文件名配置，避免重复 server_name
 if [[ -f "$LEGACY_NGINX_CONF" ]] && grep -Fq "server_name $DOMAIN;" "$LEGACY_NGINX_CONF" && grep -Fq "proxy_pass http://127.0.0.1:$PORT;" "$LEGACY_NGINX_CONF"; then
   LEGACY_BACKUP_PATH="${LEGACY_NGINX_CONF}.bak.$(date +%s)"
   echo -e "\n检测到旧版配置 $LEGACY_NGINX_CONF ，正在备份到 $LEGACY_BACKUP_PATH ..."
   mv "$LEGACY_NGINX_CONF" "$LEGACY_BACKUP_PATH"
 fi
 
-# 6. 写入 Nginx 引导配置，用于 webroot 方式申请证书
 echo -e "\n写入 Nginx 引导配置..."
 cat <<EOF >"$NGINX_CONF"
 server {
@@ -174,14 +335,12 @@ echo -e "\n启动或重载 Nginx..."
 systemctl enable nginx
 reload_or_restart_nginx
 
-# 7. 申请 SSL 证书
-echo -e "\n申请 VLESS 域名 SSL 证书..."
+echo -e "\n申请 CDN 域名 SSL 证书..."
 certbot certonly --webroot -w "$WEB_ROOT" -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email
 
 echo -e "\n申请 Hysteria2 域名 SSL 证书..."
 certbot certonly --webroot -w "$HY2_WEB_ROOT" -d "$HY2_DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email
 
-# 8. 写入 Nginx 最终配置
 echo -e "\n写入 Nginx 最终配置..."
 cat <<EOF >"$NGINX_CONF"
 server {
@@ -193,12 +352,12 @@ server {
     }
 
     location / {
-        return 301 https://\$host\$request_uri;
+        return 301 https://\$host:8443\$request_uri;
     }
 }
 
 server {
-    listen 443 ssl http2;
+    listen 8443 ssl http2;
     server_name $DOMAIN;
     root $WEB_ROOT;
     index index.html;
@@ -208,12 +367,10 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
 
-    # 根目录伪装网站
     location / {
         try_files \$uri \$uri/ /index.html;
     }
 
-    # Xray WebSocket 分流
     location $WSPATH {
         if (\$http_upgrade != "websocket") {
             return 404;
@@ -230,6 +387,16 @@ server {
 }
 EOF
 write_hy2_nginx_conf
+
+echo -e "\n生成 Reality 密钥并写入 sing-box 配置..."
+generate_reality_keys
+write_reality_config
+
+echo -e "\n校验 sing-box 配置..."
+if ! sing-box check -D /var/lib/sing-box -C "$REALITY_CONFIG_DIR"; then
+  echo "sing-box 配置校验失败，安装终止。"
+  exit 1
+fi
 
 echo -e "\n安装 Hysteria2..."
 HYSTERIA_USER=root bash <(curl -fsSL https://get.hy2.sh/)
@@ -249,7 +416,6 @@ auth:
   password: $HYSTERIA_AUTH
 EOF
 
-# 9. 校验并重载服务
 echo -e "\n校验 Nginx 最终配置..."
 if ! nginx -t; then
   echo "Nginx 最终配置校验失败，安装终止。"
@@ -257,16 +423,17 @@ if ! nginx -t; then
 fi
 
 echo -e "\n重载服务中..."
-systemctl enable xray nginx
-systemctl enable hysteria-server.service
+systemctl enable xray sing-box hysteria-server.service nginx
 systemctl restart xray
+systemctl restart sing-box
 systemctl restart hysteria-server.service
 reload_or_restart_nginx
 
-# 10. 保存部署元数据
 ENCODED_WSPATH="$(urlencode "$WSPATH")"
-VLESS_LINK="vless://$UUID@$DOMAIN:443?encryption=none&security=tls&type=ws&host=$DOMAIN&path=$ENCODED_WSPATH&sni=$DOMAIN#$DOMAIN"
-HY2_LINK="hy2://$HYSTERIA_AUTH@$HY2_DOMAIN:$HY2_PORT/?sni=$HY2_DOMAIN#$HY2_DOMAIN"
+ENCODED_REALITY_SNI="$(urlencode "$REALITY_SERVER_NAME")"
+VLESS_LINK="vless://$UUID@$DOMAIN:$CDN_PORT?encryption=none&security=tls&type=ws&host=$DOMAIN&path=$ENCODED_WSPATH&sni=$DOMAIN#$DOMAIN-cdn"
+REALITY_LINK="vless://$UUID@$SERVER_IP:$REALITY_PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$ENCODED_REALITY_SNI&fp=$REALITY_FINGERPRINT&pbk=$REALITY_PUBLIC_KEY&sid=$REALITY_SHORT_ID&type=tcp&headerType=none#reality-direct"
+HY2_LINK="hy2://$HYSTERIA_AUTH@$HY2_DOMAIN:$HY2_PORT/?sni=$HY2_DOMAIN#$HY2_DOMAIN-hy2"
 
 echo -e "\n写入部署元数据..."
 mkdir -p "$METADATA_DIR"
@@ -275,8 +442,18 @@ mkdir -p "$METADATA_DIR"
   write_metadata_field "UUID" "$UUID"
   write_metadata_field "WSPATH" "$WSPATH"
   write_metadata_field "PORT" "$PORT"
+  write_metadata_field "CDN_PORT" "$CDN_PORT"
+  write_metadata_field "SERVER_IP" "$SERVER_IP"
   write_metadata_field "WEB_ROOT" "$WEB_ROOT"
   write_metadata_field "NGINX_CONF" "$NGINX_CONF"
+  write_metadata_field "REALITY_PORT" "$REALITY_PORT"
+  write_metadata_field "REALITY_SERVER_NAME" "$REALITY_SERVER_NAME"
+  write_metadata_field "REALITY_FINGERPRINT" "$REALITY_FINGERPRINT"
+  write_metadata_field "REALITY_SHORT_ID" "$REALITY_SHORT_ID"
+  write_metadata_field "REALITY_PRIVATE_KEY" "$REALITY_PRIVATE_KEY"
+  write_metadata_field "REALITY_PUBLIC_KEY" "$REALITY_PUBLIC_KEY"
+  write_metadata_field "REALITY_CONFIG_DIR" "$REALITY_CONFIG_DIR"
+  write_metadata_field "REALITY_CONFIG" "$REALITY_CONFIG"
   write_metadata_field "HY2_DOMAIN" "$HY2_DOMAIN"
   write_metadata_field "HY2_PORT" "$HY2_PORT"
   write_metadata_field "HY2_WEB_ROOT" "$HY2_WEB_ROOT"
@@ -285,38 +462,55 @@ mkdir -p "$METADATA_DIR"
   write_metadata_field "HYSTERIA_CONFIG" "$HYSTERIA_CONFIG"
   write_metadata_field "HYSTERIA_AUTH" "$HYSTERIA_AUTH"
   write_metadata_field "VLESS_LINK" "$VLESS_LINK"
+  write_metadata_field "REALITY_LINK" "$REALITY_LINK"
   write_metadata_field "HY2_LINK" "$HY2_LINK"
 } >"$METADATA_FILE"
 
-# 11. 输出客户端配置信息
 clear
 echo -e "================================================="
 echo -e "部署成功！以下是你的客户端连接信息："
 echo -e "================================================="
-echo -e "协议 (Protocol): VLESS"
+echo -e "CDN 线路 (VLESS + WS + TLS)"
 echo -e "地址 (Address): $DOMAIN"
-echo -e "端口 (Port): 443"
+echo -e "端口 (Port): $CDN_PORT"
 echo -e "用户 ID (UUID): $UUID"
 echo -e "传输协议 (Network): ws"
 echo -e "伪装域名 (Host): $DOMAIN"
 echo -e "路径 (Path): $WSPATH"
 echo -e "底层传输安全 (TLS): tls"
-echo -e "Hysteria2 直连域名: $HY2_DOMAIN"
-echo -e "Hysteria2 端口 (UDP): $HY2_PORT"
-echo -e "Hysteria2 认证密码: $HYSTERIA_AUTH"
+echo -e "-------------------------------------------------"
+echo -e "Reality 线路 (VLESS + Reality)"
+echo -e "地址 (Address): $SERVER_IP"
+echo -e "端口 (Port): $REALITY_PORT"
+echo -e "用户 ID (UUID): $UUID"
+echo -e "借用目标 (SNI): $REALITY_SERVER_NAME"
+echo -e "Fingerprint: $REALITY_FINGERPRINT"
+echo -e "Public Key: $REALITY_PUBLIC_KEY"
+echo -e "Short ID: $REALITY_SHORT_ID"
+echo -e "-------------------------------------------------"
+echo -e "Hysteria2 线路"
+echo -e "地址 (Address): $HY2_DOMAIN"
+echo -e "端口 (UDP): $HY2_PORT"
+echo -e "认证密码: $HYSTERIA_AUTH"
+echo -e "-------------------------------------------------"
 echo -e "Nginx 配置文件: $NGINX_CONF"
 echo -e "Hysteria2 Challenge 配置: $HY2_NGINX_CONF"
 echo -e "伪装站目录: $WEB_ROOT"
 echo -e "Hysteria2 Challenge 目录: $HY2_WEB_ROOT"
+echo -e "Reality 配置文件: $REALITY_CONFIG"
 echo -e "部署元数据文件: $METADATA_FILE"
 echo -e "================================================="
-echo -e "客户端分享链接 (VLESS URL):"
+echo -e "客户端分享链接 (CDN VLESS URL):"
 printf '%s\n' "$VLESS_LINK"
+echo -e "客户端分享链接 (Reality VLESS URL):"
+printf '%s\n' "$REALITY_LINK"
 echo -e "客户端分享链接 (Hysteria2 URL):"
 printf '%s\n' "$HY2_LINK"
 echo -e "================================================="
-echo -e "现在你可以在浏览器中访问 https://$DOMAIN ，你会看到一个小游戏伪装页。"
+echo -e "浏览器伪装页地址: https://$DOMAIN:$CDN_PORT"
+echo -e "Reality 不需要单独域名，默认直接连接服务器公网 IP：$SERVER_IP"
+echo -e "Reality 当前借用目标: $REALITY_SERVER_NAME"
 echo -e "Hysteria2 的 $HY2_DOMAIN 必须保持 DNS only，并确保 443/udp 已放行。"
+echo -e "CDN 的 $DOMAIN 可以在确认线路正常后再开启 Cloudflare 小黄云。"
 echo -e "后续如需新增其他网站，直接在 /etc/nginx/conf.d/ 新增其他域名的 conf 文件即可。"
-echo -e "确认网页可以正常打开、VLESS 可以正常连接后，再去 Cloudflare 开启 $DOMAIN 的小黄云 CDN。"
 echo -e "================================================="

@@ -49,7 +49,7 @@ if [[ $# -ge 1 ]]; then
   DOMAIN_INPUT="$1"
 else
   if compgen -G "$METADATA_DIR/*.env" >/dev/null 2>&1; then
-    echo "检测到以下已记录域名："
+    echo "检测到以下已记录主域名："
     for file in "$METADATA_DIR"/*.env; do
       basename "$file" .env
     done
@@ -67,14 +67,14 @@ METADATA_FILE="$(resolve_metadata_file "$DOMAIN_INPUT")"
 DOMAIN="$DOMAIN_INPUT"
 NGINX_CONF="/etc/nginx/conf.d/${DOMAIN}.conf"
 WEB_ROOT="/var/www/$DOMAIN"
-XRAY_CONFIG="/usr/local/etc/xray/config.json"
+REALITY_CONFIG="/etc/sing-box/config.json"
 HY2_DOMAIN="${HY2_DOMAIN:-}"
 HY2_NGINX_CONF="/etc/nginx/conf.d/${HY2_DOMAIN}.conf"
 HY2_WEB_ROOT="/var/www/$HY2_DOMAIN"
+XRAY_CONFIG="/usr/local/etc/xray/config.json"
 HYSTERIA_CONFIG="/etc/hysteria/config.yaml"
 
 if [[ -f "$METADATA_FILE" ]]; then
-  # The installer writes this file; sourcing it restores the exact managed paths.
   # shellcheck disable=SC1090
   . "$METADATA_FILE"
 else
@@ -83,9 +83,10 @@ else
 fi
 
 echo "将卸载当前域名的代理站点资源："
-echo "- 域名: $DOMAIN"
+echo "- CDN 域名: $DOMAIN"
 echo "- Nginx 配置: $NGINX_CONF"
 echo "- 站点目录: $WEB_ROOT"
+echo "- Reality 配置: $REALITY_CONFIG"
 echo "- Hysteria2 域名: ${HY2_DOMAIN:-未记录}"
 echo "- Hysteria2 Challenge 配置: ${HY2_NGINX_CONF:-未记录}"
 echo "- Hysteria2 Challenge 目录: ${HY2_WEB_ROOT:-未记录}"
@@ -103,14 +104,17 @@ if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
   exit 0
 fi
 
-echo -e "\n停止 Xray 服务..."
+echo -e "\n停止服务..."
 systemctl stop xray 2>/dev/null || true
 systemctl disable xray 2>/dev/null || true
+systemctl stop sing-box 2>/dev/null || true
+systemctl disable sing-box 2>/dev/null || true
 systemctl stop hysteria-server.service 2>/dev/null || true
 systemctl disable hysteria-server.service 2>/dev/null || true
 
-echo -e "\n删除 Xray/Hysteria2 配置..."
+echo -e "\n删除 Xray / Reality / Hysteria2 配置..."
 rm -f "$XRAY_CONFIG"
+rm -f "$REALITY_CONFIG"
 rm -f "$HYSTERIA_CONFIG"
 
 echo -e "\n删除当前域名的 Nginx 配置和站点目录..."
@@ -140,6 +144,7 @@ fi
 echo -e "\n删除部署元数据..."
 rm -f "$METADATA_FILE"
 rmdir "$METADATA_DIR" 2>/dev/null || true
+rmdir "/etc/sing-box" 2>/dev/null || true
 
 echo -e "\n校验 Nginx 配置..."
 if ! nginx -t; then
@@ -151,4 +156,4 @@ echo -e "\n重载 Nginx..."
 reload_or_restart_nginx
 
 echo -e "\n卸载完成。"
-echo "已清理当前域名相关的 VLESS/Hysteria2 资源，未卸载 nginx、certbot、xray 或 hysteria 二进制本体。"
+echo "已清理当前域名相关的 CDN VLESS / Reality / Hysteria2 资源，未卸载 nginx、certbot、xray、sing-box 或 hysteria 二进制本体。"
