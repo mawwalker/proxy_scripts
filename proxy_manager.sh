@@ -744,6 +744,7 @@ write_reality_config() {
       ],
       "tls": {
         "enabled": true,
+        "server_name": "$REALITY_SERVER_NAME",
         "reality": {
           "enabled": true,
           "handshake": {
