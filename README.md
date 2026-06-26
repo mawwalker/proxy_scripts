@@ -93,7 +93,6 @@ proxy-manager init default
 执行安装命令后，`proxy-manager` 会要求你输入：
 
 - CDN 域名，例如：`cdn.example.com`
-- WebSocket 路径，例如：`/secret-ws`
 - Hysteria2 直连域名，例如：`hy2.example.com`
 
 Reality 这一条不会再要求你输入自有域名，而是会：
@@ -105,6 +104,7 @@ Reality 这一条不会再要求你输入自有域名，而是会：
 脚本会自动生成：
 
 - 一个共享 `UUID`
+- 一个 UUID 风格的 WebSocket 路径，例如：`/550e8400-e29b-41d4-a716-446655440000`
 - 一个随机 `Reality short_id`
 - 一组 `Reality public/private key`
 - 一个随机 `Hysteria2` 密码
@@ -152,7 +152,7 @@ Reality 当前预设借用目标：
 安装完成后会输出三条链接，类似：
 
 ```text
-vless://uuid@cdn.example.com:8443?encryption=none&security=tls&type=ws&host=cdn.example.com&path=%2Fsecret-ws&sni=cdn.example.com#cdn.example.com-cdn
+vless://uuid@cdn.example.com:8443?encryption=none&security=tls&type=ws&host=cdn.example.com&path=%2F550e8400-e29b-41d4-a716-446655440000&sni=cdn.example.com#cdn.example.com-cdn
 vless://uuid@203.0.113.10:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=s3.amazonaws.com&fp=chrome&pbk=PUBLIC_KEY&sid=SHORT_ID&type=tcp&headerType=none#reality-direct
 hy2://password@hy2.example.com:443/?sni=hy2.example.com#hy2.example.com-hy2
 ```
@@ -203,6 +203,8 @@ proxy-manager change default hy2 password myStrongPassword123
 proxy-manager change default site html default
 proxy-manager change default site html /root/my-site/index.html
 ```
+
+其中 `proxy-manager change default cdn path auto` 会重新生成一个新的 `/UUID` 路径。
 
 这些 `change` 命令会自动：
 

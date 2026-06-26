@@ -70,7 +70,11 @@ random_password() {
 }
 
 random_path() {
-  printf '/%s\n' "$(openssl rand -hex 6)"
+  local path_uuid
+
+  path_uuid="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)"
+  [[ -n "$path_uuid" ]] || die "生成 WebSocket 路径失败。"
+  printf '/%s\n' "$path_uuid"
 }
 
 select_reality_target() {
@@ -651,16 +655,15 @@ cmd_init() {
 
   PROFILE_NAME="$profile"
   read -r -p "请输入你的 CDN 域名 (例如: cdn.yourdomain.com): " DOMAIN
-  read -r -p "请输入你想设置的 WebSocket 路径 (需以 / 开头，例如: /secret-ws): " WSPATH
   read -r -p "请输入 Hysteria2 使用的直连域名 (例如: hy2.yourdomain.com): " HY2_DOMAIN
 
-  [[ -n "$DOMAIN" && -n "$WSPATH" && -n "$HY2_DOMAIN" ]] || die "CDN 域名、WebSocket 路径、Hysteria2 域名都不能为空。"
-  [[ "$WSPATH" == /* ]] || die "WebSocket 路径必须以 / 开头。"
+  [[ -n "$DOMAIN" && -n "$HY2_DOMAIN" ]] || die "CDN 域名和 Hysteria2 域名都不能为空。"
   [[ "$HY2_DOMAIN" != "$DOMAIN" ]] || die "Hysteria2 直连域名不能和 CDN 域名相同。"
 
   select_reality_target
 
   SHARED_UUID="$(cat /proc/sys/kernel/random/uuid)"
+  WSPATH="$(random_path)"
   SERVER_IP="$(detect_public_ipv4 || true)"
   if [[ -z "$SERVER_IP" ]]; then
     read -r -p "自动检测公网 IPv4 失败，请手动输入服务器公网 IPv4: " SERVER_IP
