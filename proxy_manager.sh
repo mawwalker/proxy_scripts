@@ -448,7 +448,7 @@ show_main_menu() {
   done
 }
 
-derive_profile_paths() {
+derive_profile_storage_paths() {
   PROFILE_DIR="$(profile_dir "$PROFILE_NAME")"
   ENTRIES_DIR="$PROFILE_DIR/entries"
   GENERATED_DIR="$PROFILE_DIR/generated"
@@ -456,6 +456,10 @@ derive_profile_paths() {
   CDN_ENV="$ENTRIES_DIR/cdn.env"
   REALITY_ENV="$ENTRIES_DIR/reality.env"
   HY2_ENV="$ENTRIES_DIR/hy2.env"
+}
+
+derive_profile_paths() {
+  derive_profile_storage_paths
   WEB_ROOT="/var/www/$DOMAIN"
   NGINX_CONF="/etc/nginx/conf.d/${DOMAIN}.conf"
   ACME_CHALLENGE_DIR="$WEB_ROOT/.well-known/acme-challenge"
@@ -555,7 +559,7 @@ resolve_profile_name() {
 
 load_profile() {
   PROFILE_NAME="$(resolve_profile_name "${1:-$DEFAULT_PROFILE}")"
-  derive_profile_paths
+  derive_profile_storage_paths
   [[ -f "$PROFILE_ENV" && -f "$CDN_ENV" && -f "$REALITY_ENV" && -f "$HY2_ENV" ]] || die "profile 文件不完整: $PROFILE_NAME"
   # shellcheck disable=SC1090
   . "$PROFILE_ENV"
@@ -1139,7 +1143,7 @@ cmd_del() {
   load_profile "$profile"
   profile_count="$(count_profiles)"
 
-  if [[ $# -eq 0 ]]; then
+  if [[ -z "${1:-}" ]]; then
     echo
     echo "将卸载当前配置："
     echo "- CDN 域名: $DOMAIN"
@@ -1203,27 +1207,27 @@ main() {
       ;;
     init)
       shift
-      cmd_init "${1:-$DEFAULT_PROFILE}"
+      cmd_init "$@"
       ;;
     apply)
       shift
-      cmd_apply "${1:-}"
+      cmd_apply "$@"
       ;;
     info)
       shift
-      cmd_info "${1:-}"
+      cmd_info "$@"
       ;;
     url)
       shift
-      cmd_url "${1:-}" "${2:-}"
+      cmd_url "$@"
       ;;
     change)
       shift
-      cmd_change "${1:-}" "${2:-}" "${3:-}" "${4:-}"
+      cmd_change "$@"
       ;;
     del)
       shift
-      cmd_del "${1:-}"
+      cmd_del "$@"
       ;;
     id)
       shift
