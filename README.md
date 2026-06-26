@@ -170,43 +170,63 @@ hy2://password@hy2.example.com:443/?sni=hy2.example.com#hy2.example.com-hy2
 常用用法：
 
 ```bash
+proxy-manager
 proxy-manager help
-proxy-manager info default
-proxy-manager url default all
-proxy-manager url default reality
-proxy-manager apply default
-proxy-manager del default
+proxy-manager info
+proxy-manager url
+proxy-manager url reality
+proxy-manager path auto
+proxy-manager sni
+proxy-manager passwd auto
+proxy-manager web /root/my-site/index.html
+proxy-manager apply
+proxy-manager del
 ```
 
 当前版本同一台机器一次只运行一个活动 profile。  
-如果你后面保存了多套 profile，它们更适合作为“切换预设”，不是并行共存实例。
+如果你后面保存了多套 profile，它们更适合作为“切换预设”，不是并行共存实例。日常使用时你基本不需要关心 `profile` 这个词。
+
+如果你更习惯 233boy 那种风格，现在也支持这些快捷命令：
+
+```bash
+proxy-manager id auto
+proxy-manager id 11111111-2222-3333-4444-555555555555
+proxy-manager path /new-ws
+proxy-manager path auto
+proxy-manager sni s3.amazonaws.com
+proxy-manager passwd auto
+proxy-manager web default
+proxy-manager web /root/my-site/index.html
+```
+
+没有写全参数时，脚本会继续提问，而不是只抛一行用法错误。
 
 ## 支持修改什么
 
 当前第一版管理器先完整支持你现在这套默认三线路模板，还没有扩成“任意协议任意组合”的通用平台。
 
-目前支持的高频修改项：
+完整写法依然保留兼容。如果你更喜欢原始命令形式，也可以继续用：
 
 ```bash
-proxy-manager change default shared uuid auto
-proxy-manager change default shared uuid 11111111-2222-3333-4444-555555555555
+proxy-manager change shared uuid auto
+proxy-manager change shared uuid 11111111-2222-3333-4444-555555555555
 
-proxy-manager change default cdn path /new-ws
-proxy-manager change default cdn path auto
+proxy-manager change cdn path /new-ws
+proxy-manager change cdn path auto
 
-proxy-manager change default reality target s3.amazonaws.com
-proxy-manager change default reality key auto
+proxy-manager change reality target s3.amazonaws.com
+proxy-manager change reality key auto
 
-proxy-manager change default hy2 password auto
-proxy-manager change default hy2 password myStrongPassword123
+proxy-manager change hy2 password auto
+proxy-manager change hy2 password myStrongPassword123
 
-proxy-manager change default site html default
-proxy-manager change default site html /root/my-site/index.html
+proxy-manager change site html default
+proxy-manager change site html /root/my-site/index.html
 ```
 
-其中 `proxy-manager change default cdn path auto` 会重新生成一个新的 `/UUID` 路径。
+其中 `proxy-manager path auto` 或 `proxy-manager change cdn path auto` 都会重新生成一个新的 `/UUID` 路径。
 
-这些 `change` 命令会自动：
+这些修改命令会自动：
 
 1. 更新 profile 数据
 2. 重新渲染 `nginx / xray / sing-box / hysteria` 配置
@@ -216,11 +236,13 @@ proxy-manager change default site html /root/my-site/index.html
 
 ## 配置存储结构
 
-默认 profile 会保存到：
+当前这套默认配置在内部会保存到：
 
 ```text
 /etc/proxy_scripts/profiles/default/
 ```
+
+这是脚本内部的数据目录。日常使用一般不需要直接操作它。
 
 其中主要包括：
 
@@ -241,7 +263,7 @@ proxy-manager change default site html /root/my-site/index.html
 /etc/proxy_scripts/<你的-CDN-域名>.env
 ```
 
-主要用于定位 profile 和兼容现有卸载入口。
+主要用于定位内部 profile 和兼容现有卸载入口。
 
 ## 关于伪装页
 
@@ -251,7 +273,7 @@ proxy-manager change default site html /root/my-site/index.html
 - 首次安装时默认页面会被放到：
   `/usr/local/share/proxy-scripts/index.html`
 - 如果你后续要切换自己的页面，直接用：
-  `proxy-manager change default site html /你的/index.html`
+  `proxy-manager web /你的/index.html`
 
 ## Nginx 配置说明
 

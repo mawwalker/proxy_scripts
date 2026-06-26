@@ -159,6 +159,295 @@ count_profiles() {
   printf '%s\n' "$count"
 }
 
+current_profile_name() {
+  local active_profile=""
+  local profile_path
+
+  if [[ -f "$ACTIVE_PROFILE_FILE" ]]; then
+    active_profile="$(tr -d '[:space:]' < "$ACTIVE_PROFILE_FILE")"
+    if [[ -n "$active_profile" && -d "$(profile_dir "$active_profile")" ]]; then
+      printf '%s\n' "$active_profile"
+      return 0
+    fi
+  fi
+
+  if [[ -d "$(profile_dir "$DEFAULT_PROFILE")" ]]; then
+    printf '%s\n' "$DEFAULT_PROFILE"
+    return 0
+  fi
+
+  if compgen -G "$PROFILES_DIR/*/profile.env" >/dev/null 2>&1; then
+    profile_path="$(printf '%s\n' "$PROFILES_DIR"/*/profile.env | head -n 1)"
+    printf '%s\n' "$(basename "$(dirname "$profile_path")")"
+    return 0
+  fi
+
+  return 1
+}
+
+require_current_profile_name() {
+  local profile_name
+
+  profile_name="$(current_profile_name || true)"
+  [[ -n "$profile_name" ]] || die "当前还没有初始化配置，请先运行 proxy-manager init，或直接运行 proxy-manager 进入菜单。"
+  printf '%s\n' "$profile_name"
+}
+
+resolve_effective_profile() {
+  if [[ -n "${1:-}" ]]; then
+    printf '%s\n' "$1"
+  else
+    require_current_profile_name
+  fi
+}
+
+is_change_section() {
+  case "${1:-}" in
+    shared|cdn|reality|hy2|site)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+is_url_target() {
+  case "${1:-}" in
+    cdn|reality|hy2|all)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+confirm_action() {
+  local prompt="${1:-确认继续？[y/N]: }"
+  local answer
+
+  read -r -p "$prompt" answer
+  [[ "$answer" =~ ^[Yy]$ ]]
+}
+
+select_url_target() {
+  local choice
+
+  echo
+  echo "请选择要输出的链接："
+  echo "1. CDN VLESS"
+  echo "2. Reality"
+  echo "3. Hysteria2"
+  echo "4. 全部"
+  read -r -p "请输入选项 [1-4，默认 4]: " choice
+
+  case "${choice:-4}" in
+    1) URL_TARGET="cdn" ;;
+    2) URL_TARGET="reality" ;;
+    3) URL_TARGET="hy2" ;;
+    4) URL_TARGET="all" ;;
+    *) die "无效选项: $choice" ;;
+  esac
+}
+
+select_change_item() {
+  local choice
+
+  echo
+  echo "请选择要修改的内容："
+  echo "1. 共享 UUID"
+  echo "2. CDN 路径"
+  echo "3. Reality 借用目标"
+  echo "4. Reality 密钥"
+  echo "5. Hysteria2 密码"
+  echo "6. 伪装页 HTML"
+  read -r -p "请输入选项 [1-6]: " choice
+
+  case "$choice" in
+    1)
+      CHANGE_SECTION="shared"
+      CHANGE_OPTION="uuid"
+      ;;
+    2)
+      CHANGE_SECTION="cdn"
+      CHANGE_OPTION="path"
+      ;;
+    3)
+      CHANGE_SECTION="reality"
+      CHANGE_OPTION="target"
+      ;;
+    4)
+      CHANGE_SECTION="reality"
+      CHANGE_OPTION="key"
+      ;;
+    5)
+      CHANGE_SECTION="hy2"
+      CHANGE_OPTION="password"
+      ;;
+    6)
+      CHANGE_SECTION="site"
+      CHANGE_OPTION="html"
+      ;;
+    *)
+      die "无效选项: $choice"
+      ;;
+  esac
+}
+
+select_change_option_for_section() {
+  local section="$1"
+  local choice
+
+  case "$section" in
+    shared)
+      CHANGE_OPTION="uuid"
+      ;;
+    cdn)
+      CHANGE_OPTION="path"
+      ;;
+    hy2)
+      CHANGE_OPTION="password"
+      ;;
+    site)
+      CHANGE_OPTION="html"
+      ;;
+    reality)
+      echo
+      echo "请选择 Reality 修改项："
+      echo "1. 借用目标"
+      echo "2. 重新生成密钥和 short_id"
+      read -r -p "请输入选项 [1-2，默认 1]: " choice
+      case "${choice:-1}" in
+        1) CHANGE_OPTION="target" ;;
+        2) CHANGE_OPTION="key" ;;
+        *) die "无效选项: $choice" ;;
+      esac
+      ;;
+    *)
+      die "不支持的更改分组: $section"
+      ;;
+  esac
+}
+
+prompt_change_value() {
+  local section="$1"
+  local option="$2"
+  local value="${3:-}"
+  local site_choice
+
+  CHANGE_VALUE="$value"
+
+  case "$section:$option" in
+    shared:uuid)
+      if [[ -z "$CHANGE_VALUE" ]]; then
+        read -r -p "请输入新的 UUID，直接回车自动生成: " CHANGE_VALUE
+        [[ -n "$CHANGE_VALUE" ]] || CHANGE_VALUE="auto"
+      fi
+      ;;
+    cdn:path)
+      if [[ -z "$CHANGE_VALUE" ]]; then
+        read -r -p "请输入新的 CDN 路径，直接回车自动生成: " CHANGE_VALUE
+        [[ -n "$CHANGE_VALUE" ]] || CHANGE_VALUE="auto"
+      fi
+      ;;
+    reality:target)
+      if [[ -z "$CHANGE_VALUE" ]]; then
+        select_reality_target
+        CHANGE_VALUE="$REALITY_SERVER_NAME"
+      fi
+      ;;
+    reality:key)
+      [[ -n "$CHANGE_VALUE" ]] || CHANGE_VALUE="auto"
+      ;;
+    hy2:password)
+      if [[ -z "$CHANGE_VALUE" ]]; then
+        read -r -p "请输入新的 Hysteria2 密码，直接回车自动生成: " CHANGE_VALUE
+        [[ -n "$CHANGE_VALUE" ]] || CHANGE_VALUE="auto"
+      fi
+      ;;
+    site:html)
+      if [[ -z "$CHANGE_VALUE" ]]; then
+        echo
+        echo "请选择伪装页来源："
+        echo "1. 使用默认页面"
+        echo "2. 使用自定义 HTML 文件"
+        read -r -p "请输入选项 [1-2，默认 1]: " site_choice
+        case "${site_choice:-1}" in
+          1)
+            CHANGE_VALUE="default"
+            ;;
+          2)
+            read -r -p "请输入自定义 HTML 文件绝对路径: " CHANGE_VALUE
+            [[ -n "$CHANGE_VALUE" ]] || die "自定义 HTML 文件路径不能为空。"
+            ;;
+          *)
+            die "无效选项: $site_choice"
+            ;;
+        esac
+      fi
+      ;;
+    *)
+      die "不支持的更改项: $section $option"
+      ;;
+  esac
+}
+
+show_main_menu() {
+  local choice
+
+  while true; do
+    echo
+    echo "proxy-manager 菜单"
+    echo "1. 初始化默认配置"
+    echo "2. 查看当前配置"
+    echo "3. 输出客户端链接"
+    echo "4. 修改配置"
+    echo "5. 重新应用配置"
+    echo "6. 卸载当前配置"
+    echo "7. 查看帮助"
+    echo "0. 退出"
+    read -r -p "请输入选项 [0-7]: " choice
+
+    case "$choice" in
+      1)
+        cmd_init "$DEFAULT_PROFILE"
+        return 0
+        ;;
+      2)
+        cmd_info
+        return 0
+        ;;
+      3)
+        cmd_url
+        return 0
+        ;;
+      4)
+        cmd_change
+        return 0
+        ;;
+      5)
+        cmd_apply
+        return 0
+        ;;
+      6)
+        cmd_del
+        return 0
+        ;;
+      7)
+        cmd_help
+        return 0
+        ;;
+      0)
+        return 0
+        ;;
+      *)
+        echo "无效选项，请重新输入。"
+        ;;
+    esac
+  done
+}
+
 derive_profile_paths() {
   PROFILE_DIR="$(profile_dir "$PROFILE_NAME")"
   ENTRIES_DIR="$PROFILE_DIR/entries"
@@ -545,7 +834,6 @@ write_compat_metadata() {
 print_profile_summary() {
   compute_links
   echo "================================================="
-  echo "Profile: $PROFILE_NAME"
   echo "CDN 域名: $DOMAIN"
   echo "CDN 路径: $WSPATH"
   echo "共享 UUID: $SHARED_UUID"
@@ -627,6 +915,23 @@ cmd_apply_internal() {
 cmd_help() {
   cat <<'EOF'
 proxy-manager usage:
+  proxy-manager                  交互菜单
+  proxy-manager init            首次初始化
+  proxy-manager info            查看当前配置
+  proxy-manager url [cdn|reality|hy2|all]
+  proxy-manager change          交互式修改配置
+  proxy-manager apply           重新应用当前配置
+  proxy-manager del             卸载当前配置
+  proxy-manager help
+
+快捷命令:
+  id [uuid|auto]
+  path [/path|auto]
+  sni [domain]
+  passwd [password|auto]
+  web [default|/abs/path/index.html]
+
+兼容完整写法:
   proxy-manager init [profile]
   proxy-manager apply [profile]
   proxy-manager info [profile]
@@ -651,7 +956,7 @@ cmd_init() {
   local profile="${1:-$DEFAULT_PROFILE}"
 
   ensure_root
-  [[ ! -d "$(profile_dir "$profile")" ]] || die "profile 已存在: $profile"
+  [[ ! -d "$(profile_dir "$profile")" ]] || die "当前已经存在一套配置。如需重装，请先执行 proxy-manager del 卸载后再初始化。"
 
   PROFILE_NAME="$profile"
   read -r -p "请输入你的 CDN 域名 (例如: cdn.yourdomain.com): " DOMAIN
@@ -687,33 +992,87 @@ cmd_init() {
 }
 
 cmd_apply() {
+  local profile="${1:-}"
+
   ensure_root
-  cmd_apply_internal "${1:-$DEFAULT_PROFILE}"
+  profile="$(resolve_effective_profile "$profile")"
+  cmd_apply_internal "$profile"
   print_profile_summary
 }
 
 cmd_info() {
+  local profile="${1:-}"
+
   ensure_root
-  load_profile "${1:-$DEFAULT_PROFILE}"
+  profile="$(resolve_effective_profile "$profile")"
+  load_profile "$profile"
   print_profile_summary
 }
 
 cmd_url() {
+  local first_arg="${1:-}"
+  local second_arg="${2:-}"
+  local profile
+  local target
+
   ensure_root
-  load_profile "${1:-$DEFAULT_PROFILE}"
-  print_urls "${2:-all}"
+
+  if is_url_target "$first_arg"; then
+    profile="$(require_current_profile_name)"
+    target="$first_arg"
+  else
+    profile="$(resolve_effective_profile "$first_arg")"
+    target="$second_arg"
+  fi
+
+  if [[ -z "$target" ]]; then
+    select_url_target
+    target="$URL_TARGET"
+  fi
+
+  load_profile "$profile"
+  print_urls "$target"
 }
 
 cmd_change() {
-  local profile="${1:-$DEFAULT_PROFILE}"
-  local section="${2:-}"
-  local option="${3:-}"
-  local value="${4:-}"
+  local first_arg="${1:-}"
+  local second_arg="${2:-}"
+  local third_arg="${3:-}"
+  local fourth_arg="${4:-}"
+  local profile
+  local section
+  local option
+  local value
 
   ensure_root
-  [[ -n "$section" && -n "$option" ]] || die "用法: proxy-manager change [profile] [shared|cdn|reality|hy2|site] [option] [value|auto]"
+
+  if is_change_section "$first_arg"; then
+    profile="$(require_current_profile_name)"
+    section="$first_arg"
+    option="$second_arg"
+    value="$third_arg"
+  else
+    profile="$(resolve_effective_profile "$first_arg")"
+    section="$second_arg"
+    option="$third_arg"
+    value="$fourth_arg"
+  fi
 
   load_profile "$profile"
+
+  if [[ -z "$section" ]]; then
+    select_change_item
+    section="$CHANGE_SECTION"
+    option="$CHANGE_OPTION"
+  fi
+
+  if [[ -z "$option" ]]; then
+    select_change_option_for_section "$section"
+    option="$CHANGE_OPTION"
+  fi
+
+  prompt_change_value "$section" "$option" "$value"
+  value="$CHANGE_VALUE"
 
   case "$section:$option" in
     shared:uuid)
@@ -771,13 +1130,25 @@ cmd_change() {
 }
 
 cmd_del() {
-  local profile="${1:-$DEFAULT_PROFILE}"
+  local profile="${1:-}"
   local profile_count
   local active_profile=""
 
   ensure_root
+  profile="$(resolve_effective_profile "$profile")"
   load_profile "$profile"
   profile_count="$(count_profiles)"
+
+  if [[ $# -eq 0 ]]; then
+    echo
+    echo "将卸载当前配置："
+    echo "- CDN 域名: $DOMAIN"
+    echo "- Hysteria2 域名: $HY2_DOMAIN"
+    if ! confirm_action "确认卸载？[y/N]: "; then
+      echo "已取消卸载。"
+      return 0
+    fi
+  fi
 
   if [[ "$profile_count" -gt 1 ]]; then
     if [[ -f "$ACTIVE_PROFILE_FILE" ]]; then
@@ -824,32 +1195,55 @@ cmd_del() {
 }
 
 main() {
-  local cmd="${1:-help}"
+  local cmd="${1:-menu}"
 
   case "$cmd" in
+    menu|main)
+      show_main_menu
+      ;;
     init)
       shift
       cmd_init "${1:-$DEFAULT_PROFILE}"
       ;;
     apply)
       shift
-      cmd_apply "${1:-$DEFAULT_PROFILE}"
+      cmd_apply "${1:-}"
       ;;
     info)
       shift
-      cmd_info "${1:-$DEFAULT_PROFILE}"
+      cmd_info "${1:-}"
       ;;
     url)
       shift
-      cmd_url "${1:-$DEFAULT_PROFILE}" "${2:-all}"
+      cmd_url "${1:-}" "${2:-}"
       ;;
     change)
       shift
-      cmd_change "${1:-$DEFAULT_PROFILE}" "${2:-}" "${3:-}" "${4:-}"
+      cmd_change "${1:-}" "${2:-}" "${3:-}" "${4:-}"
       ;;
     del)
       shift
-      cmd_del "${1:-$DEFAULT_PROFILE}"
+      cmd_del "${1:-}"
+      ;;
+    id)
+      shift
+      cmd_change shared uuid "${1:-}"
+      ;;
+    path)
+      shift
+      cmd_change cdn path "${1:-}"
+      ;;
+    sni)
+      shift
+      cmd_change reality target "${1:-}"
+      ;;
+    passwd)
+      shift
+      cmd_change hy2 password "${1:-}"
+      ;;
+    web)
+      shift
+      cmd_change site html "${1:-}"
       ;;
     help|-h|--help)
       cmd_help
