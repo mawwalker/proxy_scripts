@@ -136,6 +136,7 @@ Reality 当前预设借用目标：
 - 协议：`VLESS + Reality`
 - 端口：`443/tcp`
 - 入口：`sing-box`
+- 监听：`sing-box` 直接监听公网 `443/tcp`
 - 用途：低延迟直连，用借用站点伪装 TLS 外观
 
 3. `Hysteria2`

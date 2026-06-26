@@ -735,6 +735,7 @@ write_reality_config() {
     {
       "type": "vless",
       "tag": "reality-in",
+      "listen": "::",
       "listen_port": $REALITY_PORT,
       "users": [
         {
