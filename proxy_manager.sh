@@ -316,7 +316,7 @@ select_change_option_for_section() {
       echo
       echo "请选择 Reality 修改项："
       echo "1. 借用目标"
-      echo "2. 重新生成密钥和 short_id"
+      echo "2. 重新生成密钥"
       read -r -p "请输入选项 [1-2，默认 1]: " choice
       case "${choice:-1}" in
         1) CHANGE_OPTION="target" ;;
@@ -752,7 +752,7 @@ write_reality_config() {
           },
           "private_key": "$REALITY_PRIVATE_KEY",
           "short_id": [
-            "$REALITY_SHORT_ID"
+            ""
           ]
         }
       }
@@ -791,7 +791,7 @@ compute_links() {
   encoded_ws_path="$(urlencode "$WSPATH")"
   encoded_reality_sni="$(urlencode "$REALITY_SERVER_NAME")"
   VLESS_LINK="vless://$SHARED_UUID@$DOMAIN:$CDN_PORT?encryption=none&security=tls&type=ws&host=$DOMAIN&path=$encoded_ws_path&sni=$DOMAIN#$DOMAIN-cdn"
-  REALITY_LINK="vless://$SHARED_UUID@$SERVER_IP:$REALITY_PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$encoded_reality_sni&fp=$REALITY_FINGERPRINT&pbk=$REALITY_PUBLIC_KEY&sid=$REALITY_SHORT_ID&type=tcp&headerType=none#reality-direct"
+  REALITY_LINK="vless://$SHARED_UUID@$SERVER_IP:$REALITY_PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$encoded_reality_sni&fp=$REALITY_FINGERPRINT&pbk=$REALITY_PUBLIC_KEY&type=tcp#reality-direct"
   HY2_LINK="hy2://$HYSTERIA_AUTH@$HY2_DOMAIN:$HY2_PORT/?sni=$HY2_DOMAIN#$HY2_DOMAIN-hy2"
 }
 
@@ -984,7 +984,7 @@ cmd_init() {
   REALITY_PORT=443
   HY2_PORT=443
   REALITY_FINGERPRINT="chrome"
-  REALITY_SHORT_ID="$(openssl rand -hex 8)"
+  REALITY_SHORT_ID=""
   HYSTERIA_AUTH="$(random_password)"
   SITE_HTML_MODE="default"
   SITE_HTML_PATH=""
@@ -1102,7 +1102,7 @@ cmd_change() {
       if [[ -n "$value" && "$value" != "auto" ]]; then
         die "当前仅支持 reality key auto"
       fi
-      REALITY_SHORT_ID="$(openssl rand -hex 8)"
+      REALITY_SHORT_ID=""
       generate_reality_keys
       ;;
     hy2:password)
